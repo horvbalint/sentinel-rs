@@ -18,10 +18,10 @@ async fn main() {
         tokio::join!(db_future, server_future, info_collector_future);
 
     if let Err(e) = db_result {
-        eprintln!("Error in database thread: {:#?}", e);
+        eprintln!("Error in database task: {:#?}", e);
     }
 
     if let Err(e) = server_result {
-        eprintln!("Error in server thread: {:#?}", e);
+        eprintln!("Error in server task: {:#?}", e);
     }
 }

@@ -1,3 +1,4 @@
+use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, Params, Statement};
 use tokio::{
     sync::{
@@ -20,22 +21,19 @@ pub struct Db<'conn> {
 }
 
 impl<'conn> Db<'conn> {
-    pub fn new(connection: &'conn Connection) -> Self {
-        connection
-            .execute(
-                "CREATE TABLE IF NOT EXISTS cpu_usage (
+    pub fn new(connection: &'conn Connection) -> Result<Self> {
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS cpu_usage (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     percentage REAL NOT NULL,
                     timestamp DATETIME NOT NULL,
                     container CHAR(64)
                 )",
-                (),
-            )
-            .expect("Failed to create cpu_usage table");
+            (),
+        )?;
 
-        connection
-            .execute(
-                "CREATE TABLE IF NOT EXISTS memory_usage (
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS memory_usage (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     total INTEGER NOT NULL,
                     used INTEGER NOT NULL,
@@ -43,32 +41,23 @@ impl<'conn> Db<'conn> {
                     timestamp DATETIME NOT NULL,
                     container CHAR(64)
                 )",
-                (),
-            )
-            .expect("Failed to create memory_usage table");
+            (),
+        )?;
 
-        Self {
+        Ok(Self {
             insert_cpu_stmt: connection
-                .prepare("INSERT INTO cpu_usage (percentage, timestamp, container) VALUES (?1, ?2, ?3)")
-                .expect("Failed to prepare CPU insert statement"),
+                .prepare("INSERT INTO cpu_usage (percentage, timestamp, container) VALUES (?1, ?2, ?3)")?,
             insert_memory_stmt: connection
-                .prepare(
-                    "INSERT INTO memory_usage (total, used, percentage, timestamp, container) VALUES (?1, ?2, ?3, ?4, ?5)",
-                )
-                .expect("Failed to prepare memory insert statement"),
+                .prepare("INSERT INTO memory_usage (total, used, percentage, timestamp, container) VALUES (?1, ?2, ?3, ?4, ?5)",)?,
             get_last_cpu_container_stmt: connection
-                .prepare("SELECT percentage FROM cpu_usage WHERE container LIKE (?1 || '%') ORDER BY timestamp DESC LIMIT 1")
-                .expect("Failed to prepare container CPU select statement"),
+                .prepare("SELECT percentage FROM cpu_usage WHERE container LIKE (?1 || '%') ORDER BY timestamp DESC LIMIT 1")?,
             get_last_memory_container_stmt: connection
-                .prepare("SELECT total, used, percentage FROM memory_usage WHERE container LIKE (?1 || '%') ORDER BY timestamp DESC LIMIT 1")
-                .expect("Failed to prepare container memory select statement"),
+                .prepare("SELECT total, used, percentage FROM memory_usage WHERE container LIKE (?1 || '%') ORDER BY timestamp DESC LIMIT 1")?,
             get_last_cpu_host_stmt: connection
-                .prepare("SELECT percentage FROM cpu_usage WHERE container IS NULL ORDER BY timestamp DESC LIMIT 1")
-                .expect("Failed to prepare host CPU select statement"),
+                .prepare("SELECT percentage FROM cpu_usage WHERE container IS NULL ORDER BY timestamp DESC LIMIT 1")?,
             get_last_memory_host_stmt: connection
-                .prepare("SELECT total, used, percentage FROM memory_usage WHERE container IS NULL ORDER BY timestamp DESC LIMIT 1")
-                .expect("Failed to prepare host memory select statement"),
-        }
+                .prepare("SELECT total, used, percentage FROM memory_usage WHERE container IS NULL ORDER BY timestamp DESC LIMIT 1")?,
+        })
     }
 
     pub fn insert_resource_usage(
@@ -77,26 +66,24 @@ impl<'conn> Db<'conn> {
         memory_usage: MemoryUsage,
         cpu_usage: CpuUsage,
         container: Option<String>,
-    ) {
+    ) -> Result<()> {
         let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S").to_string();
 
-        self.insert_cpu_stmt
-            .execute((
-                cpu_usage.percentage,
-                timestamp_str.clone(),
-                container.clone(),
-            ))
-            .expect("Failed to insert CPU usage");
+        self.insert_cpu_stmt.execute((
+            cpu_usage.percentage,
+            timestamp_str.clone(),
+            container.clone(),
+        ))?;
 
-        self.insert_memory_stmt
-            .execute((
-                memory_usage.total,
-                memory_usage.used,
-                memory_usage.percentage,
-                timestamp_str,
-                container,
-            ))
-            .expect("Failed to insert memory usage");
+        self.insert_memory_stmt.execute((
+            memory_usage.total,
+            memory_usage.used,
+            memory_usage.percentage,
+            timestamp_str,
+            container,
+        ))?;
+
+        Ok(())
     }
 
     pub fn get_last_cpu_usage(&mut self, container: Option<String>) -> Option<CpuUsage> {
@@ -159,10 +146,10 @@ pub enum DbCommand {
 
 pub type DbCommandChannel = UnboundedSender<DbCommand>;
 
-pub fn task(mut db_rx: UnboundedReceiver<DbCommand>) -> JoinHandle<()> {
+pub fn task(mut db_rx: UnboundedReceiver<DbCommand>) -> JoinHandle<Result<()>> {
     tokio::task::spawn_blocking(move || {
-        let connection = Connection::open("./test.db").expect("Failed to connect to database");
-        let mut db = Db::new(&connection);
+        let connection = Connection::open("./test.db")?;
+        let mut db = Db::new(&connection)?;
 
         while let Some(command) = db_rx.blocking_recv() {
             match command {
@@ -172,7 +159,7 @@ pub fn task(mut db_rx: UnboundedReceiver<DbCommand>) -> JoinHandle<()> {
                     cpu_usage,
                     container,
                 } => {
-                    db.insert_resource_usage(timestamp, memory_usage, cpu_usage, container);
+                    db.insert_resource_usage(timestamp, memory_usage, cpu_usage, container)?;
                 }
                 DbCommand::GetLastCpuUsage {
                     container,
@@ -180,7 +167,7 @@ pub fn task(mut db_rx: UnboundedReceiver<DbCommand>) -> JoinHandle<()> {
                 } => {
                     respond_to
                         .send(db.get_last_cpu_usage(container))
-                        .expect("failed to send response to GetLastCpuUsage");
+                        .expect("failed to send response - receiver dropped");
                 }
                 DbCommand::GetLastMemoryUsage {
                     container,
@@ -188,9 +175,11 @@ pub fn task(mut db_rx: UnboundedReceiver<DbCommand>) -> JoinHandle<()> {
                 } => {
                     respond_to
                         .send(db.get_last_memory_usage(container))
-                        .expect("failed to send response to GetLastMemoryUsage");
+                        .expect("failed to send response - receiver dropped");
                 }
             };
         }
+
+        Ok(())
     })
 }

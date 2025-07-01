@@ -1,3 +1,4 @@
+use anyhow::Result;
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -8,7 +9,7 @@ use tokio::sync::oneshot;
 
 use crate::db::{DbCommand, DbCommandChannel};
 
-pub fn task(db_tx: DbCommandChannel) -> tokio::task::JoinHandle<()> {
+pub fn task(db_tx: DbCommandChannel) -> tokio::task::JoinHandle<Result<()>> {
     tokio::task::spawn(async move {
         let app = Router::new()
             .route("/host/cpu/current", get(host_cpu_current))
@@ -17,8 +18,10 @@ pub fn task(db_tx: DbCommandChannel) -> tokio::task::JoinHandle<()> {
             .route("/{container}/memory/current", get(container_memory_current))
             .with_state(db_tx);
 
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-        axum::serve(listener, app).await.unwrap();
+        let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
+        axum::serve(listener, app).await?;
+
+        Ok(())
     })
 }
 
