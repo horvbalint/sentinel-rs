@@ -13,9 +13,8 @@ impl InfoCollector {
             .with_cpu(CpuRefreshKind::nothing().with_cpu_usage())
             .with_memory(MemoryRefreshKind::nothing().with_ram());
 
-        let system = System::new_with_specifics(collected_information);
         Self {
-            system,
+            system: System::new_with_specifics(collected_information),
             collected_information,
         }
     }

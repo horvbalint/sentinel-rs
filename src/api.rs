@@ -7,25 +7,23 @@ use axum::{
 };
 use tokio::sync::oneshot;
 
-use crate::db::{DbCommand, DbCommandChannel};
+use crate::db::{DbChannelTx, DbCommand};
 
-pub fn task(db_tx: DbCommandChannel) -> tokio::task::JoinHandle<Result<()>> {
-    tokio::task::spawn(async move {
-        let app = Router::new()
-            .route("/host/cpu/current", get(host_cpu_current))
-            .route("/host/memory/current", get(host_memory_current))
-            .route("/{container}/cpu/current", get(container_cpu_current))
-            .route("/{container}/memory/current", get(container_memory_current))
-            .with_state(db_tx);
+pub async fn start(db_tx: DbChannelTx) -> Result<()> {
+    let app = Router::new()
+        .route("/host/cpu/current", get(host_cpu_current))
+        .route("/host/memory/current", get(host_memory_current))
+        .route("/{container}/cpu/current", get(container_cpu_current))
+        .route("/{container}/memory/current", get(container_memory_current))
+        .with_state(db_tx);
 
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
-        axum::serve(listener, app).await?;
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
+    axum::serve(listener, app).await?;
 
-        Ok(())
-    })
+    Ok(())
 }
 
-async fn host_cpu_current(State(tx): State<DbCommandChannel>) -> impl IntoResponse {
+async fn host_cpu_current(State(tx): State<DbChannelTx>) -> impl IntoResponse {
     query_db_controller(tx, |respond_to| DbCommand::GetLastCpuUsage {
         container: None,
         respond_to,
@@ -33,7 +31,7 @@ async fn host_cpu_current(State(tx): State<DbCommandChannel>) -> impl IntoRespon
     .await
 }
 
-async fn host_memory_current(State(tx): State<DbCommandChannel>) -> impl IntoResponse {
+async fn host_memory_current(State(tx): State<DbChannelTx>) -> impl IntoResponse {
     query_db_controller(tx, |respond_to| DbCommand::GetLastMemoryUsage {
         container: None,
         respond_to,
@@ -42,7 +40,7 @@ async fn host_memory_current(State(tx): State<DbCommandChannel>) -> impl IntoRes
 }
 
 async fn container_cpu_current(
-    State(tx): State<DbCommandChannel>,
+    State(tx): State<DbChannelTx>,
     Path(container): Path<String>,
 ) -> impl IntoResponse {
     query_db_controller(tx, |respond_to| DbCommand::GetLastCpuUsage {
@@ -53,7 +51,7 @@ async fn container_cpu_current(
 }
 
 async fn container_memory_current(
-    State(tx): State<DbCommandChannel>,
+    State(tx): State<DbChannelTx>,
     Path(container): Path<String>,
 ) -> impl IntoResponse {
     query_db_controller(tx, |respond_to| DbCommand::GetLastMemoryUsage {
@@ -63,7 +61,7 @@ async fn container_memory_current(
     .await
 }
 
-async fn query_db_controller<T, F>(db_tx: DbCommandChannel, fun: F) -> Json<Option<T>>
+async fn query_db_controller<T, F>(db_tx: DbChannelTx, fun: F) -> Json<Option<T>>
 where
     F: FnOnce(oneshot::Sender<Option<T>>) -> DbCommand,
 {

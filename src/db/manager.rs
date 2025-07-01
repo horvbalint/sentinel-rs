@@ -1,14 +1,11 @@
 use anyhow::Result;
+use anyhow::anyhow;
 use rusqlite::{Connection, OptionalExtension, Params, Statement};
-use tokio::{
-    sync::{mpsc::UnboundedSender, oneshot},
-    task::JoinHandle,
-};
 
 use crate::types::{CpuUsage, MemoryUsage};
 
 #[derive(Debug)]
-pub struct Db<'conn> {
+pub struct DbManager<'conn> {
     insert_cpu_stmt: Statement<'conn>,
     insert_memory_stmt: Statement<'conn>,
     get_last_cpu_container_stmt: Statement<'conn>,
@@ -17,28 +14,27 @@ pub struct Db<'conn> {
     get_last_memory_host_stmt: Statement<'conn>,
 }
 
-impl<'conn> Db<'conn> {
+impl<'conn> DbManager<'conn> {
     pub fn new(connection: &'conn Connection) -> Result<Self> {
-        connection.execute(
+        connection.execute_batch(
             "CREATE TABLE IF NOT EXISTS cpu_usage (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 percentage REAL NOT NULL,
                 timestamp DATETIME NOT NULL,
                 container CHAR(64)
-            )",
-            (),
-        )?;
-
-        connection.execute(
-            "CREATE TABLE IF NOT EXISTS memory_usage (
+            );
+            
+            CREATE TABLE IF NOT EXISTS memory_usage (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 total INTEGER NOT NULL,
                 used INTEGER NOT NULL,
                 percentage REAL NOT NULL,
                 timestamp DATETIME NOT NULL,
                 container CHAR(64)
-            )",
-            (),
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_cpu_timestamp_container ON cpu_usage(timestamp DESC, container);
+            CREATE INDEX IF NOT EXISTS idx_memory_timestamp_container ON memory_usage(timestamp DESC, container);",
         )?;
 
         Ok(Self {
@@ -83,7 +79,7 @@ impl<'conn> Db<'conn> {
         Ok(())
     }
 
-    pub fn get_last_cpu_usage(&mut self, container: Option<String>) -> Option<CpuUsage> {
+    pub fn get_last_cpu_usage(&mut self, container: Option<String>) -> Result<Option<CpuUsage>> {
         match container {
             Some(container) => {
                 Self::query_last_cpu_usage(&mut self.get_last_cpu_container_stmt, [container])
@@ -92,17 +88,20 @@ impl<'conn> Db<'conn> {
         }
     }
 
-    fn query_last_cpu_usage(stmt: &mut Statement, params: impl Params) -> Option<CpuUsage> {
+    fn query_last_cpu_usage(stmt: &mut Statement, params: impl Params) -> Result<Option<CpuUsage>> {
         stmt.query_row(params, |row| {
             Ok(CpuUsage {
                 percentage: row.get(0)?,
             })
         })
         .optional()
-        .expect("Failed to get last CPU usage")
+        .map_err(|e| anyhow!("Failed to get last CPU usage: {e}"))
     }
 
-    pub fn get_last_memory_usage(&mut self, container: Option<String>) -> Option<MemoryUsage> {
+    pub fn get_last_memory_usage(
+        &mut self,
+        container: Option<String>,
+    ) -> Result<Option<MemoryUsage>> {
         match container {
             Some(container) => {
                 Self::query_last_memory_usage(&mut self.get_last_memory_container_stmt, [container])
@@ -111,7 +110,10 @@ impl<'conn> Db<'conn> {
         }
     }
 
-    fn query_last_memory_usage(stmt: &mut Statement, params: impl Params) -> Option<MemoryUsage> {
+    fn query_last_memory_usage(
+        stmt: &mut Statement,
+        params: impl Params,
+    ) -> Result<Option<MemoryUsage>> {
         stmt.query_row(params, |row| {
             Ok(MemoryUsage {
                 total: row.get(0)?,
@@ -120,67 +122,6 @@ impl<'conn> Db<'conn> {
             })
         })
         .optional()
-        .expect("Failed to get last memory usage")
+        .map_err(|e| anyhow!("Failed to get last memory usage: {e}"))
     }
-}
-
-pub enum DbCommand {
-    InsertResourceUsage {
-        timestamp: chrono::NaiveDateTime,
-        cpu_usage: CpuUsage,
-        memory_usage: MemoryUsage,
-        container: Option<String>,
-    },
-    GetLastCpuUsage {
-        container: Option<String>,
-        respond_to: oneshot::Sender<Option<CpuUsage>>,
-    },
-    GetLastMemoryUsage {
-        container: Option<String>,
-        respond_to: oneshot::Sender<Option<MemoryUsage>>,
-    },
-}
-
-pub type DbCommandChannel = UnboundedSender<DbCommand>;
-
-pub fn task() -> (DbCommandChannel, JoinHandle<Result<()>>) {
-    let (db_tx, mut db_rx) = tokio::sync::mpsc::unbounded_channel::<DbCommand>();
-
-    let task = tokio::task::spawn_blocking(move || {
-        let connection = Connection::open("./test.db")?;
-        let mut db = Db::new(&connection)?;
-
-        while let Some(command) = db_rx.blocking_recv() {
-            match command {
-                DbCommand::InsertResourceUsage {
-                    timestamp,
-                    memory_usage,
-                    cpu_usage,
-                    container,
-                } => {
-                    db.insert_resource_usage(timestamp, memory_usage, cpu_usage, container)?;
-                }
-                DbCommand::GetLastCpuUsage {
-                    container,
-                    respond_to,
-                } => {
-                    respond_to
-                        .send(db.get_last_cpu_usage(container))
-                        .expect("failed to send response - receiver dropped");
-                }
-                DbCommand::GetLastMemoryUsage {
-                    container,
-                    respond_to,
-                } => {
-                    respond_to
-                        .send(db.get_last_memory_usage(container))
-                        .expect("failed to send response - receiver dropped");
-                }
-            };
-        }
-
-        Ok(())
-    });
-
-    (db_tx, task)
 }

@@ -1,23 +1,34 @@
 mod api;
 mod db;
-mod host;
-mod info_collector;
 mod types;
+mod usage_collector;
 
 #[tokio::main]
-async fn main() {
-    let (db_tx, db_future) = db::task();
-    let server_future = api::task(db_tx.clone());
-    let info_collector_future = info_collector::task(db_tx);
+async fn main() -> anyhow::Result<()> {
+    env_logger::init();
 
-    let (db_result, server_result, _) =
-        tokio::join!(db_future, server_future, info_collector_future);
+    let (db_tx, db_rx) = db::create_command_channel();
+    let db_handle = db::start(db_rx);
+    let server_future = api::start(db_tx.clone());
+    let usage_collector_future = usage_collector::start(db_tx);
 
-    if let Err(e) = db_result {
-        eprintln!("Error in database task: {e:#?}");
+    tokio::select! {
+        Ok(Err(e)) = db_handle => {
+            log::error!("Error in database process: {e}");
+        }
+        Err(e) = server_future => {
+            log::error!("Error in server process: {e}");
+        }
+        Err(e) = usage_collector_future => {
+            log::error!("Error in usage collector process: {e}");
+        }
+        _ = tokio::signal::ctrl_c() => {
+            log::info!("Received Ctrl+C, shutting down gracefully...");
+        }
+        else => {
+            log::warn!("Unexpected termination, shutting down...");
+        }
     }
 
-    if let Err(e) = server_result {
-        eprintln!("Error in server task: {e:#?}");
-    }
+    Ok(())
 }
