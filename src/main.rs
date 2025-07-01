@@ -1,5 +1,3 @@
-use crate::db::DbCommand;
-
 mod api;
 mod db;
 mod host;
@@ -8,9 +6,7 @@ mod types;
 
 #[tokio::main]
 async fn main() {
-    let (db_tx, db_rx) = tokio::sync::mpsc::unbounded_channel::<DbCommand>();
-
-    let db_future = db::task(db_rx);
+    let (db_tx, db_future) = db::task();
     let server_future = api::task(db_tx.clone());
     let info_collector_future = info_collector::task(db_tx);
 
@@ -18,10 +14,10 @@ async fn main() {
         tokio::join!(db_future, server_future, info_collector_future);
 
     if let Err(e) = db_result {
-        eprintln!("Error in database task: {:#?}", e);
+        eprintln!("Error in database task: {e:#?}");
     }
 
     if let Err(e) = server_result {
-        eprintln!("Error in server task: {:#?}", e);
+        eprintln!("Error in server task: {e:#?}");
     }
 }

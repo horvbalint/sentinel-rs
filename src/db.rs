@@ -1,10 +1,7 @@
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, Params, Statement};
 use tokio::{
-    sync::{
-        mpsc::{UnboundedReceiver, UnboundedSender},
-        oneshot,
-    },
+    sync::{mpsc::UnboundedSender, oneshot},
     task::JoinHandle,
 };
 
@@ -24,23 +21,23 @@ impl<'conn> Db<'conn> {
     pub fn new(connection: &'conn Connection) -> Result<Self> {
         connection.execute(
             "CREATE TABLE IF NOT EXISTS cpu_usage (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    percentage REAL NOT NULL,
-                    timestamp DATETIME NOT NULL,
-                    container CHAR(64)
-                )",
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                percentage REAL NOT NULL,
+                timestamp DATETIME NOT NULL,
+                container CHAR(64)
+            )",
             (),
         )?;
 
         connection.execute(
             "CREATE TABLE IF NOT EXISTS memory_usage (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    total INTEGER NOT NULL,
-                    used INTEGER NOT NULL,
-                    percentage REAL NOT NULL,
-                    timestamp DATETIME NOT NULL,
-                    container CHAR(64)
-                )",
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                total INTEGER NOT NULL,
+                used INTEGER NOT NULL,
+                percentage REAL NOT NULL,
+                timestamp DATETIME NOT NULL,
+                container CHAR(64)
+            )",
             (),
         )?;
 
@@ -146,8 +143,10 @@ pub enum DbCommand {
 
 pub type DbCommandChannel = UnboundedSender<DbCommand>;
 
-pub fn task(mut db_rx: UnboundedReceiver<DbCommand>) -> JoinHandle<Result<()>> {
-    tokio::task::spawn_blocking(move || {
+pub fn task() -> (DbCommandChannel, JoinHandle<Result<()>>) {
+    let (db_tx, mut db_rx) = tokio::sync::mpsc::unbounded_channel::<DbCommand>();
+
+    let task = tokio::task::spawn_blocking(move || {
         let connection = Connection::open("./test.db")?;
         let mut db = Db::new(&connection)?;
 
@@ -181,5 +180,7 @@ pub fn task(mut db_rx: UnboundedReceiver<DbCommand>) -> JoinHandle<Result<()>> {
         }
 
         Ok(())
-    })
+    });
+
+    (db_tx, task)
 }
