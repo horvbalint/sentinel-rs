@@ -10,7 +10,7 @@ mod host;
 
 pub async fn start(db_tx: DbChannelTx) -> Result<()> {
     let docker = Docker::connect_with_socket_defaults()?;
-    let mut host_info_collector = host::InfoCollector::new();
+    let mut host_usage_collector = host::UsageCollector::new();
 
     tokio::time::sleep(MINIMUM_CPU_UPDATE_INTERVAL).await;
     let mut ticker = tokio::time::interval(Duration::from_secs(5));
@@ -18,25 +18,25 @@ pub async fn start(db_tx: DbChannelTx) -> Result<()> {
     loop {
         ticker.tick().await;
 
-        collect_information(&mut host_info_collector, &docker, db_tx.clone()).await?;
+        collect_information(&mut host_usage_collector, &docker, db_tx.clone()).await?;
         println!("Inserted CPU and memory usage data");
     }
 }
 
 async fn collect_information(
-    host_info_collector: &mut host::InfoCollector,
+    host_usage_collector: &mut host::UsageCollector,
     docker: &Docker,
     db_tx: DbChannelTx,
 ) -> Result<()> {
     let timestamp = chrono::Local::now().naive_local();
 
     // host
-    host_info_collector.refresh();
+    host_usage_collector.refresh();
 
     db_tx.send(DbCommand::InsertResourceUsage {
         timestamp,
-        cpu_usage: host_info_collector.get_cpu_usage(),
-        memory_usage: host_info_collector.get_memory_usage(),
+        cpu_usage: host_usage_collector.get_cpu_usage(),
+        memory_usage: host_usage_collector.get_memory_usage(),
         container: None,
     })?;
 
@@ -64,7 +64,7 @@ async fn collect_information(
                     }
                 }
                 None => {
-                    log::error!("No resource usage data for container '{container_id}'");
+                    log::warn!("No resource usage data for container '{container_id}'");
                 }
             }
         });

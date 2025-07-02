@@ -2,12 +2,12 @@ use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
 use crate::types::{CpuUsage, MemoryUsage};
 
-pub struct InfoCollector {
+pub struct UsageCollector {
     system: System,
     collected_information: RefreshKind,
 }
 
-impl InfoCollector {
+impl UsageCollector {
     pub fn new() -> Self {
         let collected_information = RefreshKind::nothing()
             .with_cpu(CpuRefreshKind::nothing().with_cpu_usage())
