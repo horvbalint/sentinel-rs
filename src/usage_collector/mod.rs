@@ -1,5 +1,6 @@
 use anyhow::Result;
 use bollard::{Docker, query_parameters::ListContainersOptions};
+use chrono::Utc;
 use std::time::Duration;
 use sysinfo::MINIMUM_CPU_UPDATE_INTERVAL;
 
@@ -28,7 +29,7 @@ async fn collect_information(
     docker: &Docker,
     db_tx: DbChannelTx,
 ) -> Result<()> {
-    let timestamp = chrono::Local::now().naive_local();
+    let timestamp = Utc::now();
 
     // host
     host_usage_collector.refresh();
