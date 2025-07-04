@@ -3,10 +3,10 @@ BEGIN;
 CREATE TABLE IF NOT EXISTS usage (
     timestamp DATETIME NOT NULL,
     container CHAR(64),
-    cpu_percentage REAL NOT NULL,
+    cpu_percentage TINYINT NOT NULL,
     memory_total INTEGER NOT NULL,
     memory_used INTEGER NOT NULL,
-    memory_percentage REAL NOT NULL
+    memory_percentage TINYINT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_timestamp_container_desc ON usage(timestamp DESC, container);

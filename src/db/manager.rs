@@ -58,10 +58,10 @@ impl<'conn> DbManager<'conn> {
         self.insert_usage_stmt.execute(named_params!(
             ":timestamp": timestamp,
             ":container": container,
-            ":cpu_percentage": cpu_usage.percentage,
+            ":cpu_percentage": cpu_usage.percentage.round(),
             ":memory_total": memory_usage.total,
             ":memory_used": memory_usage.used,
-            ":memory_percentage": memory_usage.percentage,
+            ":memory_percentage": memory_usage.percentage.round(),
         ))?;
 
         Ok(())
