@@ -9,18 +9,25 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use tokio::sync::oneshot;
 
-use crate::db::{DbChannelTx, DbCommand};
+use crate::{
+    db::{DbChannelTx, DbCommand},
+    types::Interval,
+};
 
 pub async fn start(db_tx: DbChannelTx) -> Result<()> {
     let app = Router::new()
-        .route("/host/cpu/last", get(host_cpu_last))
-        .route("/host/cpu/history", get(host_cpu_history))
-        .route("/host/memory/last", get(host_memory_last))
-        .route("/host/memory/history", get(host_memory_history))
-        .route("/{container}/cpu/last", get(container_cpu_last))
-        .route("/{container}/cpu/history", get(container_cpu_history))
-        .route("/{container}/memory/last", get(container_memory_last))
-        .route("/{container}/memory/history", get(container_memory_history))
+        .route("/host/cpu/last", get(cpu_last))
+        .route("/host/cpu/last/{interval}", get(cpu_interval))
+        .route("/host/cpu/history", get(cpu_history))
+        .route("/host/memory/last", get(memory_last))
+        .route("/host/memory/last/{interval}", get(memory_interval))
+        .route("/host/memory/history", get(memory_history))
+        .route("/{container}/cpu/last", get(cpu_last))
+        .route("/{container}/cpu/last/{interval}", get(cpu_interval))
+        .route("/{container}/cpu/history", get(cpu_history))
+        .route("/{container}/memory/last", get(memory_last))
+        .route("/{container}/memory/last/{interval}", get(memory_interval))
+        .route("/{container}/memory/history", get(memory_history))
         .with_state(db_tx);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
@@ -29,99 +36,87 @@ pub async fn start(db_tx: DbChannelTx) -> Result<()> {
     Ok(())
 }
 
-async fn host_cpu_last(State(tx): State<DbChannelTx>) -> impl IntoResponse {
-    query_one(tx, |respond_to| DbCommand::GetLastCpuUsage {
-        container: None,
-        respond_to,
-    })
-    .await
-}
-
-async fn host_memory_last(State(tx): State<DbChannelTx>) -> impl IntoResponse {
-    query_one(tx, |respond_to| DbCommand::GetLastMemoryUsage {
-        container: None,
-        respond_to,
-    })
-    .await
-}
-
-async fn container_cpu_last(
+async fn memory_last(
     State(tx): State<DbChannelTx>,
-    Path(container): Path<String>,
-) -> impl IntoResponse {
-    query_one(tx, |respond_to| DbCommand::GetLastCpuUsage {
-        container: Some(container),
-        respond_to,
-    })
-    .await
-}
-
-async fn container_memory_last(
-    State(tx): State<DbChannelTx>,
-    Path(container): Path<String>,
+    container: Option<Path<String>>,
 ) -> impl IntoResponse {
     query_one(tx, |respond_to| DbCommand::GetLastMemoryUsage {
-        container: Some(container),
+        container: container.map(|p| p.0),
+        respond_to,
+    })
+    .await
+}
+
+async fn cpu_last(
+    State(tx): State<DbChannelTx>,
+    container: Option<Path<String>>,
+) -> impl IntoResponse {
+    query_one(tx, |respond_to| DbCommand::GetLastCpuUsage {
+        container: container.map(|p| p.0),
         respond_to,
     })
     .await
 }
 
 #[derive(Debug, Deserialize)]
-struct BetweenParams {
+struct IntervalRouteParams {
+    container: Option<String>,
+    interval: Interval,
+}
+
+async fn cpu_interval(
+    State(tx): State<DbChannelTx>,
+    Path(params): Path<IntervalRouteParams>,
+) -> impl IntoResponse {
+    query_multiple(tx, |respond_to| DbCommand::GetIntervalCpuUsage {
+        container: params.container,
+        interval: params.interval,
+        respond_to,
+    })
+    .await
+}
+
+async fn memory_interval(
+    State(tx): State<DbChannelTx>,
+    Path(params): Path<IntervalRouteParams>,
+) -> impl IntoResponse {
+    query_multiple(tx, |respond_to| DbCommand::GetIntervalMemoryUsage {
+        container: params.container,
+        interval: params.interval,
+        respond_to,
+    })
+    .await
+}
+
+#[derive(Debug, Deserialize)]
+struct BetweenQueryParams {
     pub from: Option<DateTime<Utc>>,
     pub to: Option<DateTime<Utc>>,
 }
 
-async fn host_cpu_history(
+async fn cpu_history(
     State(tx): State<DbChannelTx>,
-    Query(BetweenParams { from, to }): Query<BetweenParams>,
+    container: Option<Path<String>>,
+    Query(BetweenQueryParams { from, to }): Query<BetweenQueryParams>,
 ) -> impl IntoResponse {
     query_multiple(tx, move |respond_to| DbCommand::GetCpuUsageHistory {
         from: from,
         to,
-        container: None,
+        container: container.map(|p| p.0),
         respond_to,
     })
     .await
 }
 
-async fn host_memory_history(
+async fn memory_history(
     State(tx): State<DbChannelTx>,
-    Query(BetweenParams { from, to }): Query<BetweenParams>,
+    container: Option<Path<String>>,
+    Query(BetweenQueryParams { from, to }): Query<BetweenQueryParams>,
 ) -> impl IntoResponse {
     query_multiple(tx, move |respond_to| DbCommand::GetMemoryUsageHistory {
         from,
         to,
-        container: None,
-        respond_to,
-    })
-    .await
-}
-
-async fn container_cpu_history(
-    State(tx): State<DbChannelTx>,
-    Path(container): Path<String>,
-    Query(BetweenParams { from, to }): Query<BetweenParams>,
-) -> impl IntoResponse {
-    query_multiple(tx, move |respond_to| DbCommand::GetCpuUsageHistory {
-        from,
-        to,
-        container: Some(container),
-        respond_to,
-    })
-    .await
-}
-
-async fn container_memory_history(
-    State(tx): State<DbChannelTx>,
-    Path(container): Path<String>,
-    Query(BetweenParams { from, to }): Query<BetweenParams>,
-) -> impl IntoResponse {
-    query_multiple(tx, move |respond_to| DbCommand::GetMemoryUsageHistory {
-        from,
-        to,
-        container: Some(container),
+        container: container.map(|p| p.0),
         respond_to,
     })
     .await

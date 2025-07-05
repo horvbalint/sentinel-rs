@@ -9,7 +9,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::types::{CpuUsage, CpuUsageDataPoint, MemoryUsage, MemoryUsageDataPoint};
+use crate::types::{CpuUsage, CpuUsageDataPoint, Interval, MemoryUsage, MemoryUsageDataPoint};
 use manager::DbManager;
 
 mod manager;
@@ -28,6 +28,16 @@ pub enum DbCommand {
     GetLastMemoryUsage {
         container: Option<String>,
         respond_to: oneshot::Sender<Option<MemoryUsageDataPoint>>,
+    },
+    GetIntervalCpuUsage {
+        interval: Interval,
+        container: Option<String>,
+        respond_to: oneshot::Sender<Vec<CpuUsageDataPoint>>,
+    },
+    GetIntervalMemoryUsage {
+        interval: Interval,
+        container: Option<String>,
+        respond_to: oneshot::Sender<Vec<MemoryUsageDataPoint>>,
     },
     GetCpuUsageHistory {
         from: Option<DateTime<Utc>>,
@@ -69,14 +79,42 @@ pub fn start(mut db_rx: DbChannelRx) -> JoinHandle<Result<()>> {
                     container,
                     respond_to,
                 } => {
-                    let result = db.get_last_cpu_usage(container).unwrap_or(None);
+                    let result = db
+                        .get_last_cpu_usage(container)
+                        .inspect_err(|e| log::error!("Error getting last cpu usage: {e}"))
+                        .unwrap_or(None);
                     let _ = respond_to.send(result);
                 }
                 DbCommand::GetLastMemoryUsage {
                     container,
                     respond_to,
                 } => {
-                    let result = db.get_last_memory_usage(container).unwrap_or(None);
+                    let result = db
+                        .get_last_memory_usage(container)
+                        .inspect_err(|e| log::error!("Error getting last memory usage: {e}"))
+                        .unwrap_or(None);
+                    let _ = respond_to.send(result);
+                }
+                DbCommand::GetIntervalCpuUsage {
+                    interval,
+                    container,
+                    respond_to,
+                } => {
+                    let result = db
+                        .get_interval_cpu_usage(interval, container)
+                        .inspect_err(|e| log::error!("Error getting interval memory usage: {e}"))
+                        .unwrap_or_default();
+                    let _ = respond_to.send(result);
+                }
+                DbCommand::GetIntervalMemoryUsage {
+                    interval,
+                    container,
+                    respond_to,
+                } => {
+                    let result = db
+                        .get_interval_memory_usage(interval, container)
+                        .inspect_err(|e| log::error!("Error getting interval memory usage: {e}"))
+                        .unwrap_or_default();
                     let _ = respond_to.send(result);
                 }
                 DbCommand::GetCpuUsageHistory {
@@ -87,6 +125,7 @@ pub fn start(mut db_rx: DbChannelRx) -> JoinHandle<Result<()>> {
                 } => {
                     let result = db
                         .get_cpu_usage_history(from, to, container)
+                        .inspect_err(|e| log::error!("Error getting cpu usage history: {e}"))
                         .unwrap_or_default();
                     let _ = respond_to.send(result);
                 }
@@ -98,6 +137,7 @@ pub fn start(mut db_rx: DbChannelRx) -> JoinHandle<Result<()>> {
                 } => {
                     let result = db
                         .get_memory_usage_history(from, to, container)
+                        .inspect_err(|e| log::error!("Error getting memory usage history: {e}"))
                         .unwrap_or_default();
                     let _ = respond_to.send(result);
                 }

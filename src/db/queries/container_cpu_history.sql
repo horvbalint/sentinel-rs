@@ -1,5 +1,5 @@
 SELECT
-  cpu_percentage,
+  cpu_percentage AS percentage,
   timestamp
 FROM
   usage

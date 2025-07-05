@@ -1,7 +1,7 @@
 SELECT
-  memory_total,
-  memory_used,
-  memory_percentage,
+  memory_total AS total,
+  memory_used AS used,
+  memory_percentage AS percentage,
   timestamp
 FROM
   usage
